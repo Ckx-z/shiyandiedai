@@ -12,31 +12,44 @@
 
 ```
 minimax/
-├── predict/                    # 从 tianxuan-seek 复制的最小运行集 (待建)
-│   ├── predict_pair.py
-│   ├── src/
-│   ├── models/v5.3/
-│   ├── config/
-│   └── requirements.txt
+├── predict/                    # 从 tianxuan-seek 复制的最小运行集
+│   ├── predict_pair.py         # 单对预测 CLI
+│   ├── src/screening/{gnn_v3,gnn_v4}
+│   ├── src/chemistry/          # 规则 + 链接子 + 负采样
+│   ├── models/v5.3/            # 权重
+│   ├── config/model_v4.yaml
+│   └── _check_env.py           # 环境检查脚本
 │
 ├── experiment/                 # 实验反馈层 (本系统的核心)
-│   ├── feedback_db.csv         # 实验反馈 (中文表头, 见下)
+│   ├── feedback_db.csv         # 实验反馈 (中文表头)
 │   ├── failure_criteria.md     # 失败判据手册 (Class A-G)
+│   ├── failure_playbook.md     # 进行中实验的失败应对
+│   ├── in_progress.md          # 进行中实验状态板
 │   ├── reagent_db.json         # 试剂库 (CAS → 结构式/已买状态)
-│   ├── history/                # 现有方案索引
-│   │   └── index.json
-│   ├── structure/              # 32 张 CAS 结构式 PNG
-│   └── proposals/              # 生成的实验方案 docx (待建)
+│   ├── history/index.json      # 现有方案索引
+│   ├── structure/              # 32 张 CAS 结构式图片
+│   ├── proposals/              # 生成的实验方案 docx
+│   ├── daily/                  # 每日工作报告 (人类版 + AI 版)
+│   └── HOW_TO_FILL.md          # 反馈 CSV 填表指南
 │
 ├── bridge/                     # 两系统的连接层
-│   ├── cas_image_map.json      # CAS → 结构式图片映射
+│   ├── search_local_pdfs.py    # RAG 检索 (CAS + 历史反馈 + embedding)
+│   ├── generate_proposal.py    # docx 生成器 (中文模板 + 自动插图)
+│   ├── inspect_abcdef.py       # ABCDEF 巡查工具 (识别新增完成)
+│   ├── index_knowledge.py      # 知识库 PDF/docx → embedding 索引
+│   ├── update_daily.py         # 每日 22:00 日报生成 + git commit
 │   ├── llm_config.yaml         # LLM 路由 (主 MiniMax + 备 Kimi 2.7)
-│   ├── _build_reagent_db.py    # 从 xlsx 重建 reagent_db.json 的工具
-│   ├── search_local_pdfs.py    # (待建) 本地 PDF RAG 检索
-│   ├── fetch_external.py       # (待建) 外部文献 web 检索
-│   └── generate_proposal.py    # (待建) 主生成器: 拼装 docx
+│   ├── cas_image_map.json      # CAS → 结构式图片映射
+│   ├── knowledge_index.jsonl   # 知识库 embedding 索引 (1791 chunks)
+│   ├── knowledge_meta.json     # 索引元数据
+│   ├── _build_reagent_db.py    # 从 xlsx 重建 reagent_db.json
+│   └── _copy_predict.py        # 从 tianxuan-seek 复制最小集
 │
-└── README.md                   # 本文件
+├── 知识库/                    # 本地文献 PDF (只读, 来源包含于知识库/下)
+│
+├── progress.md                 # 项目进度跟踪 (时间戳追加)
+├── README.md                   # 本文件
+└── _tmp/set_api_env.ps1        # 环境变量设置脚本 (一次性)
 ```
 
 ---
@@ -45,27 +58,23 @@ minimax/
 
 ```
 [tianxuan-seek GNN]                    [实验文件夹]
-  predict_pair.py  ─── 成膜概率 ──→      feedback_db.csv
+  predict_pair.py  ── 成膜概率 ──→       feedback_db.csv
   v5.3  PR-AUC 0.7635                    ↑ ↓ (每天上传, 攒批回流)
-        ↓
-  [MiniMax RAG]  ─── 检索本地 PDF + Kimi 2.7 推理 ──→  实验方案 docx
-        ↑                                                        ↓
-  bridge/llm_config.yaml                            ───→  化学家单点选样
-        ↓
-  [失败诊断 + 下一轮建议]
-        ↓
-  反馈回 feedback_db.csv
+        ↓                                       ↓
+  [RAG + LLM 生成器]                  bridge/inspect_abcdef.py
+        ↓                                       ↓
+  实验方案 docx ←─── 知识库 embedding ──── 每周巡查 ABCDEF 新完成
 ```
 
 **关键原则**：
 - **tianxuan-seek 是只读工具源**，不重训
-- **新模型在 bridge/ 里**，是 LLM-RAG 而非端到端 ML
+- **新模型在 bridge/ 里**，是 LLM-RAG (embedding + Kimi/MiniMax LLM)
 - **实验反馈是数据**, 不是模型权重更新
 - **实验方案迭代**是文档级的, 不是梯度下降
 
 ---
 
-## 失败分类 (A-G)
+## 失败分类 (A-G, 单编组递进)
 
 | Code | 含义 | PXRD 必填 |
 |------|------|-----------|
@@ -77,64 +86,65 @@ minimax/
 | F | 膜质量中 | 必填 |
 | G | 膜质量高 | 必填 |
 
-详见 `experiment/failure_criteria.md`
-
----
-
-## 反馈 CSV 字段 (中文表头)
-
-| 字段 | 说明 |
-|------|------|
-| 方案编号 | `COF-{TAPT\|TAPB}-{YYYY-MM-DD}-{醛CAS}_{胺CAS}-v{N}` |
-| 日期 | 反馈日期 |
-| 版本 | v1, v2, v3... |
-| 醛CAS / 醛SMILES / 醛名称 / 醛结构式路径 | 单体描述 |
-| 胺CAS / 胺SMILES / 胺名称 / 胺结构式路径 | 同上 |
-| tianxuan_预测概率 / tianxuan_MC标准差 | GNN 输出 |
-| 试剂状态 | 已买 / 未买 |
-| 阳性对照 | 已知成功体系, 如 AMCOF-1 |
-| 单一变量 | 本组唯一改变的变量 |
-| 科学问题 | 本组要回答的科学问题 |
-| 失败Class | A-G |
-| 失败现象描述 | 实际观察 |
-| 根因Type | 单体 / 条件 / 操作 (辅助) |
-| 根因Notes | 详细原因 |
-| PXRD文件 / FTIR文件 / SEM文件 | 可选 |
-| 关联历史失败 | 直接相似 + 引用 |
-| 关联外推依据 | 外推置信度 + 引用 |
-| 下一轮建议 | 自动生成 |
-| 备注 | 自由文本 |
+详见 `experiment/failure_criteria.md` 和 `experiment/failure_playbook.md`
 
 ---
 
 ## LLM 路由
 
 - **主 LLM**: MiniMax (方案拼装、结构化抽取)
-- **备用 LLM**: Kimi 2.7 (失败诊断、复杂化学推理)
-- **Embedding**: MiniMax (起步, 必要时换 BGE)
+- **备用 LLM**: Kimi 2.7 (`kimi for coding`)
+- **Embedding**: MiniMax `embo-01` (type=db / type=query, 1536 维 asymmetric)
 - **本地检索**: 优先结构式 CAS 精确匹配, 其次 embedding 相似度
 
 **API key 安全**: 全部从环境变量读, 任何时候不写进文件
 
 ```powershell
-$env:KIMI_API_KEY = "..."
-$env:MINIMAX_API_KEY = "..."
+$env:KIMI_API_KEY = "你的 Kimi API key"
+$env:MINIMAX_API_KEY = "你的 MiniMax API key"
 ```
+
+设置脚本: `_tmp/set_api_env.ps1`
 
 ---
 
-## 当前状态
+## 每日工作流 (automation cron 22:00)
 
-- ✅ predict/ 复制 (待执行)
-- ✅ experiment/feedback_db.csv 表头建好
-- ✅ experiment/failure_criteria.md 写好
-- ✅ experiment/reagent_db.json 转好 (35 条)
-- ✅ experiment/structure/ 32 张 PNG 就位
-- ✅ bridge/cas_image_map.json 就位
-- ✅ bridge/llm_config.yaml 就位
-- ✅ experiment/history/index.json 就位
-- ⏳ 等待用户上传最新实验组
-- ⏳ bridge/search_local_pdfs.py
-- ⏳ bridge/fetch_external.py
-- ⏳ bridge/generate_proposal.py
-- ⏳ 第一份样例 docx
+`bridge/update_daily.py` 自动运行:
+1. 生成 `experiment/daily/{today}.md` (人类版日报)
+2. 生成 `experiment/daily/{today}_ai.md` (AI 版详细日报)
+3. 追加 `progress.md` 时间戳
+4. `git add` + `commit` (不 push)
+
+用户手动 `git push` 到 GitHub。
+
+---
+
+## Git 仓库
+
+- **本地**: `C:\Users\ckx\Desktop\minimax` (master 分支)
+- **GitHub**: `https://github.com/Ckx-z/shiyandiedai`
+- **认证**: SSH (你已配)
+
+⚠ Git Bash 自带 `sh.exe` 有 bug (`Win32 error 5`)，`git push` 改用 HTTPS + git credential。
+
+---
+
+## 当前状态 (2026-07-13)
+
+✅ 已完成:
+- 实验 ABCDEF 6 条入库 feedback_db.csv
+- 8 个进行中实验状态板
+- 失败应对 Playbook
+- tianxuan-seek 最小集复制 + predict/_check_env.py
+- RAG 检索 (4 路召回: CAS + 历史 + embedding + 关键词)
+- docx 生成器 (中文模板 + 自动插图 + 加料顺序修正 + 1.5 倍行距)
+- 知识库核心 10 篇 PDF/docx embedding 索引 (1791 chunks)
+- 每日日报 + git commit (cron job)
+- ABCDEF 巡查工具 (inspect_abcdef.py)
+
+⏸ 等待用户:
+- 安装 predict 依赖 (conda env dphuanjing)
+- 手动 git push 到 GitHub
+- 上传最新实验反馈
+- 轮换 Kimi + MiniMax API key (截图里明文暴露了)

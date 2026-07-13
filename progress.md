@@ -57,6 +57,20 @@
 #### Git 仓库 (已讨论，待拍)
 - 📌 用户已 `git init`
 - 待回答：GitHub repo URL + 认证方式 (SSH/PAT) + 分支策略 (master vs feature/*)
+
+#### 夜晚 (微信端, 后续推进)
+
+- ✅ Git 配置完成: SSH cmd + remote `https://github.com/Ckx-z/shiyandiedai.git` + longpaths
+- ✅ Initial commit (0b105e5): 369 files, 389646 lines
+- ✅ chore commit (ae155a5): remove tracked pyc
+- ✅ `bridge/inspect_abcdef.py` 巡查工具: 识别 18 个实验 (6 完成 + 12 进行中)
+- ✅ `bridge/index_knowledge.py` 索引脚本: MiniMax embo-01 + chunked + pure-python cosine
+- ✅ `bridge/update_daily.py` 每日日报 + git commit (cron job 22:00 提示创建中)
+- ✅ Knowledge index: 核心 10 篇 PDF/docx → 1791 chunks (knowledge_index.jsonl)
+- ✅ RAG 检索集成 embedding: search_local_pdfs.py 加 query_text 参数
+- ✅ 测试查询 "TFPT 三嗪醛 与 H3 长氟链酰肼" 命中 sim 0.939 (Chemist-Guided 文献)
+- ✅ v5 docx 生成 (COF-TFPT-...-v5.docx, 60KB, 含 RAG 检索结果 + 紧凑排版)
+- ✅ README.md 全部更新
 - 待实现：automation cron job (22:00 每日日报)
 
 ---

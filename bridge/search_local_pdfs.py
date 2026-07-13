@@ -9,6 +9,7 @@ import os
 import re
 import json
 import csv
+import sys
 from pathlib import Path
 
 # ---- 路径配置 ----
@@ -24,7 +25,10 @@ LOCAL_PDF_ROOTS = [
     PROJ / '知识库',                                # 用户整理过的本地知识库 (优先)
     Path(r'C:\Users\ckx\Desktop\实验\文章'),         # 原始实验 PDF 库
     Path(r'C:\Users\ckx\Desktop\科研\机器学习'),      # ML 文献库
-]   
+]    
+
+# 知识库 embedding 索引
+KB_INDEX = PROJ / 'bridge' / 'knowledge_index.jsonl'   
 
 
 def load_feedback_db():
@@ -98,6 +102,20 @@ def keyword_search_local_pdfs(keywords, max_results=10):
     return matches
 
 
+def embedding_search(query_text, top_k=5, min_sim=0.6):
+    """知识库 embedding 检索"""
+    if not KB_INDEX.exists():
+        return []
+    try:
+        sys.path.insert(0, str(HERE))
+        from index_knowledge import search_index
+        sims = search_index(query_text, top_k=top_k, min_similarity=min_sim)
+        return sims
+    except Exception as e:
+        print(f'Embedding 检索失败: {e}')
+        return []
+
+
 def search(query_dict):
     """
     主入口
@@ -105,17 +123,20 @@ def search(query_dict):
         'aldehyde_cas': '1300701-03-4',  # 可选
         'amine_cas': '14544-47-9',         # 可选
         'keywords': ['TAPT', 'CF3', '膜'],  # 可选
+        'query_text': '自然语言查询',          # 可选 (触发 embedding 检索)
         'max_pdf_results': 5
     }
     """
     aldehyde_cas = query_dict.get('aldehyde_cas')
     amine_cas = query_dict.get('amine_cas')
     keywords = query_dict.get('keywords', [])
+    query_text = query_dict.get('query_text', '')
 
     results = {
-        'feedback_matches': [],   # 直接相似的历史反馈
-        'history_doc_matches': [],  # 涉及相同 CAS 的方案
-        'pdf_keyword_matches': [],  # 文件名命中关键词的 PDF
+        'feedback_matches': [],       # 直接相似的历史反馈
+        'history_doc_matches': [],     # 涉及相同 CAS 的方案
+        'embedding_matches': [],       # 知识库 embedding 检索
+        'pdf_keyword_matches': [],     # 文件名命中关键词的 PDF
     }
 
     # 1. 反馈库 CAS 精确匹配
@@ -127,7 +148,12 @@ def search(query_dict):
     if aldehyde_cas or amine_cas:
         results['history_doc_matches'] = cas_to_smiles_candidates(aldehyde_cas, amine_cas)
 
-    # 3. 关键词扫描本地 PDF (按文件名)
+    # 3. 知识库 embedding 检索 (高价值)
+    if query_text:
+        results['embedding_matches'] = embedding_search(
+            query_text, top_k=query_dict.get('top_k_embedding', 5))
+
+    # 4. 关键词扫描本地 PDF (按文件名)
     if keywords:
         results['pdf_keyword_matches'] = keyword_search_local_pdfs(
             keywords, max_results=query_dict.get('max_pdf_results', 5))
@@ -154,6 +180,13 @@ def format_results_for_prompt(results, max_items=5):
                 f"节点 {d.get('node','?')} | 路径: {d.get('path','?')} | "
                 f"标签: {', '.join(d.get('tags', [])[:3])}"
             )
+    if results.get('embedding_matches'):
+        lines.append('## 文献 RAG (embedding 检索, 语义相关)')
+        for sim, r in results['embedding_matches'][:max_items]:
+            lines.append(
+                f"- [sim {sim:.3f}] {r['path']}\n"
+                f"  {r['text'][:200]}"
+            )
     if results.get('pdf_keyword_matches'):
         lines.append('## 本地文献（按文件名匹配）')
         for p in results['pdf_keyword_matches'][:max_items]:
@@ -167,7 +200,9 @@ if __name__ == '__main__':
         'aldehyde_cas': '1300701-03-4',
         'amine_cas': '118727-34-7',
         'keywords': ['TAPT', 'CF3', 'terphenyl'],
-        'max_pdf_results': 5
+        'query_text': 'TAPB 苯胺 与三联苯 CF3 二醛反应 玻璃壁面 成膜',
+        'max_pdf_results': 5,
+        'top_k_embedding': 3,
     })
     print('=== 自测: TAPB + A6 (从 ABCDEF 实验 A 出发) ===')
     print(format_results_for_prompt(res))
@@ -177,7 +212,9 @@ if __name__ == '__main__':
         'aldehyde_cas': '443922-06-3',
         'amine_cas': '2569674-64-0',
         'keywords': ['TFPT', '酰肼', 'hydrazide', 'fluoroalkyl'],
-        'max_pdf_results': 5
+        'query_text': 'TFPT 三嗪醛 与 H3 长氟链酰肼 反应条件 温度 溶剂',
+        'max_pdf_results': 5,
+        'top_k_embedding': 3,
     })
     print('=== 自测: TFPT + H3 (候选 #2 第一份样例) ===')
     print(format_results_for_prompt(res2))

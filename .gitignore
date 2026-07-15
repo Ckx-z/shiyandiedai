@@ -29,4 +29,4 @@ predict/models/**/*.pth
 secrets/
 
 # 本地文献知识库 (私人下载的 PDF, 不应上传)
-知识库/
+知识库/bridge/knowledge_index_tianxuan.jsonl  

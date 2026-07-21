@@ -20,15 +20,17 @@ PROJ = ROOT
 PFDB = PROJ / 'experiment' / 'feedback_db.csv'
 HINDEX = PROJ / 'experiment' / 'history' / 'index.json'
 
-# 本地 PDF 检索路径（多个）
+# 本地 PDF 检索路径(多个)
 LOCAL_PDF_ROOTS = [
     PROJ / '知识库',                                # 用户整理过的本地知识库 (优先)
     Path(r'C:\Users\ckx\Desktop\实验\文章'),         # 原始实验 PDF 库
     Path(r'C:\Users\ckx\Desktop\科研\机器学习'),      # ML 文献库
-]    
+]
 
 # 知识库 embedding 索引
-KB_INDEX = PROJ / 'bridge' / 'knowledge_index.jsonl'   
+KB_INDEX = PROJ / 'bridge' / 'knowledge_index.jsonl'
+# tianxuan-seek 全库索引 (5.8 GB, 282057 chunks, 2468 PDFs)
+TIANXUAN_INDEX = PROJ / 'bridge' / 'knowledge_index_tianxuan.jsonl'
 
 
 def load_feedback_db():
@@ -75,9 +77,9 @@ def cas_to_smiles_candidates(aldehyde_cas=None, amine_cas=None):
 
 
 def keyword_search_local_pdfs(keywords, max_results=10):
-    """本地 PDF 关键词扫描 (浅层 - 不解 PDF 内容，仅文件名/路径)
+    """本地 PDF 关键词扫描 (浅层 - 不解 PDF 内容,仅文件名/路径)
 
-    检索多个目录，按优先级返回（PROJ/知识库 优先）
+    检索多个目录,按优先级返回(PROJ/知识库 优先)
     """
     matches = []
     if not keywords:
@@ -102,18 +104,66 @@ def keyword_search_local_pdfs(keywords, max_results=10):
     return matches
 
 
-def embedding_search(query_text, top_k=5, min_sim=0.6):
-    """知识库 embedding 检索"""
-    if not KB_INDEX.exists():
+def embedding_search(query_text, top_k=5, min_sim=0.6, sources=None):
+    """embedding 检索, 支持核心知识库和 tianxuan 全库
+    
+    sources: list of str, 可选 'core' / 'tianxuan'. None = 全部.
+    """
+    import math
+    
+    index_files = []
+    if sources is None or 'core' in sources:
+        if KB_INDEX.exists():
+            index_files.append(KB_INDEX)
+    if sources is None or 'tianxuan' in sources:
+        if TIANXUAN_INDEX.exists():
+            index_files.append(TIANXUAN_INDEX)
+    
+    if not index_files:
         return []
+    
+    # 计算 query embedding
+    query_vec = _compute_query_embedding(query_text)
+    if not query_vec:
+        return []
+    
+    q_norm = math.sqrt(sum(x * x for x in query_vec)) + 1e-10
+    
+    all_sims = []
+    for idx_file in index_files:
+        with open(idx_file, encoding='utf-8') as f:
+            for line in f:
+                r = json.loads(line)
+                v = r['vector']
+                dot = sum(a * b for a, b in zip(query_vec, v))
+                v_norm = math.sqrt(sum(x * x for x in v)) + 1e-10
+                sim = dot / (q_norm * v_norm)
+                if sim >= min_sim:
+                    all_sims.append((sim, r))
+    
+    all_sims.sort(key=lambda x: x[0], reverse=True)
+    return all_sims[:top_k]
+
+
+def _compute_query_embedding(text):
+    """调用 MiniMax embedding API 计算 query 向量"""
     try:
-        sys.path.insert(0, str(HERE))
-        from index_knowledge import search_index
-        sims = search_index(query_text, top_k=top_k, min_similarity=min_sim)
-        return sims
+        api_key = os.environ.get('MINIMAX_API_KEY', '')
+        if not api_key:
+            return None
+        import requests as req
+        r = req.post(
+            'https://api.minimax.chat/v1/embeddings',
+            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            json={'model': 'embo-01', 'texts': [text], 'type': 'query'},
+            timeout=30,
+        )
+        r.raise_for_status()
+        j = r.json()
+        return j['vectors'][0]
     except Exception as e:
-        print(f'Embedding 检索失败: {e}')
-        return []
+        print(f'Embedding API 失败: {e}')
+        return None
 
 
 def search(query_dict):
@@ -135,7 +185,8 @@ def search(query_dict):
     results = {
         'feedback_matches': [],       # 直接相似的历史反馈
         'history_doc_matches': [],     # 涉及相同 CAS 的方案
-        'embedding_matches': [],       # 知识库 embedding 检索
+        'embedding_matches': [],       # 核心知识库 embedding 检索
+        'tianxuan_matches': [],        # tianxuan 全库 embedding 检索
         'pdf_keyword_matches': [],     # 文件名命中关键词的 PDF
     }
 
@@ -148,12 +199,19 @@ def search(query_dict):
     if aldehyde_cas or amine_cas:
         results['history_doc_matches'] = cas_to_smiles_candidates(aldehyde_cas, amine_cas)
 
-    # 3. 知识库 embedding 检索 (高价值)
+    # 3. 核心知识库 embedding 检索
     if query_text:
         results['embedding_matches'] = embedding_search(
-            query_text, top_k=query_dict.get('top_k_embedding', 5))
+            query_text, top_k=query_dict.get('top_k_embedding', 5),
+            sources=['core'])
 
-    # 4. 关键词扫描本地 PDF (按文件名)
+    # 4. tianxuan 全库 embedding 检索 (高容量, 可能较慢)
+    if query_text and query_dict.get('use_tianxuan', True):
+        results['tianxuan_matches'] = embedding_search(
+            query_text, top_k=query_dict.get('top_k_tianxuan', 10),
+            sources=['tianxuan'], min_sim=query_dict.get('tianxuan_min_sim', 0.65))
+
+    # 5. 关键词扫描本地 PDF (按文件名)
     if keywords:
         results['pdf_keyword_matches'] = keyword_search_local_pdfs(
             keywords, max_results=query_dict.get('max_pdf_results', 5))
@@ -181,14 +239,23 @@ def format_results_for_prompt(results, max_items=5):
                 f"标签: {', '.join(d.get('tags', [])[:3])}"
             )
     if results.get('embedding_matches'):
-        lines.append('## 文献 RAG (embedding 检索, 语义相关)')
+        lines.append('## 核心知识库 RAG (embedding 检索)')
         for sim, r in results['embedding_matches'][:max_items]:
             lines.append(
                 f"- [sim {sim:.3f}] {r['path']}\n"
                 f"  {r['text'][:200]}"
             )
+    if results.get('tianxuan_matches'):
+        lines.append("## Tianxuan 全库 RAG (embedding 检索, {} hits)".format(len(results['tianxuan_matches'])))
+        for sim, r in results['tianxuan_matches'][:max_items]:
+            src = r.get('source', '')
+            path_short = r['path'].split('\\')[-1] if '\\' in r['path'] else r['path'].split('/')[-1]
+            lines.append(
+                f"- [sim {sim:.3f}] {path_short}\n"
+                f"  {r['text'][:200]}"
+            )
     if results.get('pdf_keyword_matches'):
-        lines.append('## 本地文献（按文件名匹配）')
+        lines.append('## 本地文献(按文件名匹配)')
         for p in results['pdf_keyword_matches'][:max_items]:
             lines.append(f"- {p['name']}  路径: {p['path']}")
     return '\n'.join(lines) if lines else '(无匹配)'

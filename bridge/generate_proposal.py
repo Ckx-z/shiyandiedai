@@ -222,11 +222,16 @@ def generate(aldehyde_cas, amine_cas, related_failure_id=None,
                 related_failure = r
                 break
 
-    # RAG 检索
+    # RAG 检索 (核心知识库 + tianxuan 全库)
+    rag_query = f'{target_node_prefix} {ami.get("name_short", "")} 亚胺COF 膜合成 反应条件'
     rag_results = rag_search({
         'aldehyde_cas': aldehyde_cas,
         'amine_cas': amine_cas,
         'keywords': [target_node_prefix, 'CF3', '膜'],
+        'query_text': rag_query,
+        'use_tianxuan': True,
+        'top_k_tianxuan': 8,
+        'tianxuan_min_sim': 0.65,
     })
     rag_text = format_results_for_prompt(rag_results)
 

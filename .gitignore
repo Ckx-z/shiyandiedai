@@ -31,6 +31,9 @@ secrets/
 # 本地文献知识库 (私人下载的 PDF, 不应上传)
 知识库/
 bridge/knowledge_index_tianxuan.jsonl
+bridge/tianxuan_vectors.bin
+bridge/tianxuan_meta.json
+bridge/tianxuan_norms.bin
 bridge/indexer_*.log
 bridge/run_log.txt
 run_indexer.bat

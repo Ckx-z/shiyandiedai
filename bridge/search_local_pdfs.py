@@ -104,43 +104,49 @@ def keyword_search_local_pdfs(keywords, max_results=10):
     return matches
 
 
-def embedding_search(query_text, top_k=5, min_sim=0.6, sources=None):
+def embedding_search(query_text, top_k=5, min_sim=0.5, sources=None):
     """embedding 检索, 支持核心知识库和 tianxuan 全库
     
     sources: list of str, 可选 'core' / 'tianxuan'. None = 全部.
     """
-    import math
-    
     index_files = []
     if sources is None or 'core' in sources:
         if KB_INDEX.exists():
             index_files.append(KB_INDEX)
-    if sources is None or 'tianxuan' in sources:
-        if TIANXUAN_INDEX.exists():
-            index_files.append(TIANXUAN_INDEX)
-    
-    if not index_files:
-        return []
-    
+
+    has_tianxuan = (sources is None or 'tianxuan' in sources) and TIANXUAN_INDEX.exists()
+
     # 计算 query embedding
     query_vec = _compute_query_embedding(query_text)
     if not query_vec:
         return []
-    
-    q_norm = math.sqrt(sum(x * x for x in query_vec)) + 1e-10
-    
+
     all_sims = []
-    for idx_file in index_files:
-        with open(idx_file, encoding='utf-8') as f:
-            for line in f:
-                r = json.loads(line)
-                v = r['vector']
-                dot = sum(a * b for a, b in zip(query_vec, v))
-                v_norm = math.sqrt(sum(x * x for x in v)) + 1e-10
-                sim = dot / (q_norm * v_norm)
-                if sim >= min_sim:
-                    all_sims.append((sim, r))
-    
+
+    # 核心知识库: 线性扫描 JSONL
+    if index_files:
+        import math
+        q_norm = math.sqrt(sum(x * x for x in query_vec)) + 1e-10
+        for idx_file in index_files:
+            with open(idx_file, encoding='utf-8') as f:
+                for line in f:
+                    r = json.loads(line)
+                    v = r['vector']
+                    dot = sum(a * b for a, b in zip(query_vec, v))
+                    v_norm = math.sqrt(sum(x * x for x in v)) + 1e-10
+                    sim = dot / (q_norm * v_norm)
+                    if sim >= min_sim:
+                        all_sims.append((sim, r))
+
+    # tianxuan: 二进制快速检索
+    if has_tianxuan:
+        try:
+            from fast_search import search_tianxuan
+            fast_results = search_tianxuan(query_vec, top_k=top_k, min_sim=min_sim)
+            all_sims.extend(fast_results)
+        except ImportError:
+            pass  # fast_search 不可用时跳过
+
     all_sims.sort(key=lambda x: x[0], reverse=True)
     return all_sims[:top_k]
 

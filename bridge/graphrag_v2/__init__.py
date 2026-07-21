@@ -81,7 +81,7 @@ def print_result(result, top_n=5):
     if 'reactions' in result:
         print(f'\n=== TOP {top_n} 反应 ===')
         for h in result['reactions'][:top_n]:
-            r = h['data']
+            r = h.get('data') or {}
             mm = h.get('multimodal_score', h.get('score', 0))
             print(f'  [{mm:.3f}] {h["id"]}')
             print(f'    {r.get("aldehyde_name", "?")[:40]} + {r.get("amine_name", "?")[:40]}')
@@ -90,11 +90,12 @@ def print_result(result, top_n=5):
     if 'literatures' in result:
         print(f'\n=== TOP {top_n} 文献 (多模态重排) ===')
         for h in result['literatures'][:top_n]:
-            l = h['data']
+            l = h.get('data') or {}
             mm = h.get('multimodal_score', h.get('score', 0))
             bd = h.get('score_breakdown', {})
             print(f'  [{mm:.3f}] {h["id"]}')
-            print(f'    [{l.get("journal", "?")[:30]}] {l.get("system", "?")[:80]}')
+            if l:
+                print(f'    [{l.get("journal", "?")[:30]}] {l.get("system", "?")[:80]}')
             if bd:
                 print(f'    breakdown: kw={bd["keyword"]:.2f} emb={bd["embedding"]:.2f} '
                       f'imp={bd["importance"]:.2f} comm={bd["community"]:.2f}')

@@ -1,5 +1,7 @@
 # minimax — COF 实验方案迭代系统
 
+> **📦 迁移公告（2026-07-21）**：本项目已合并进主仓库 **[kimi-tianxuan-seek-APP](https://github.com/Ckx-z/kimi-tianxuan-seek-APP)** 的 `minimax/` 目录（git subtree 合并，完整保留本仓库全部提交历史）。后续开发请在主仓库进行；本仓库归档仅作历史留存，不再更新。
+
 把 **tianxuan-seek (GNN 成膜预测)** 和 **实验反馈** 整合到一个人机协同工作流。
 
 > 模型的归模型，实验的归实验。
